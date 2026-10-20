@@ -1,0 +1,13 @@
+{
+  "id_ejecucion": "20261020152807",
+  "fecha": "2026-10-20T15:28:12",
+  "registros_procesados": 3325,
+  "pares_evaluados": 1483,
+  "duplicados_auto": 167,
+  "pares_zona_gris": 110,
+  "grupos_modelo": 167,
+  "umbral_alto": 0.85,
+  "umbral_bajo": 0.55,
+  "duracion_seg": 4.79,
+  "version_modelo": "reglas-v2"
+}

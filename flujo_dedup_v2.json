@@ -1,0 +1,1269 @@
+{
+  "name": "Deduplicación de clientes v2 (con agente)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "3335cbe3-06ff-48d3-acce-a61fd5190d31",
+      "name": "Cada 5 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\dedup\\datos\\control.xlsx",
+        "options": {}
+      },
+      "id": "16ebb502-0a11-4bd3-86c9-7020710645be",
+      "name": "Leer control",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        230,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "af1f0eb3-b017-4ce5-a9c1-3a3b5661ebc8",
+      "name": "Extraer control",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Busca la primera solicitud PENDIENTE. Si no hay, el flujo se detiene aquí.\nconst fx = v => (typeof v === 'number' && v > 20000)\n  ? new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ')\n  : (v ?? '');\nconst filas = $input.all().map(i => ({ ...i.json, fecha_solicitud: fx(i.json.fecha_solicitud), fecha_fin: fx(i.json.fecha_fin) }));\nconst idx = filas.findIndex(f => String(f.estado).trim().toUpperCase() === 'PENDIENTE');\nif (idx === -1) return [];\nfilas[idx].estado = 'EN_PROCESO';\nreturn filas.map(json => ({ json }));"
+      },
+      "id": "1c6439c5-0c97-4115-89bc-daec57ba6c4a",
+      "name": "¿Hay pendiente?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        690,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "bf0f869f-c66f-4483-9dd8-7d4a61a52728",
+      "name": "Control a Excel",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        920,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:\\dedup\\datos\\control.xlsx",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "86fd1d53-a281-4fb6-b484-370407f4a4b4",
+      "name": "Marcar EN_PROCESO",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1150,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "command": "C:\\dedup\\venv\\Scripts\\python.exe C:\\dedup\\dedup.py --entrada C:\\dedup\\datos\\clientes.xlsx --salida C:\\dedup\\salida"
+      },
+      "id": "a1be1cfa-6822-49d0-a1f4-a45cdfe1915f",
+      "name": "Ejecutar dedup.py",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        0
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const lineas = $input.first().json.stdout.trim().split(/\\r?\\n/);\nreturn [{ json: JSON.parse(lineas[lineas.length - 1]) }];"
+      },
+      "id": "2001fe6f-af0c-47a0-a670-802eae271bb2",
+      "name": "Leer métricas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1610,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\dedup\\salida\\pares_zona_gris.json",
+        "options": {}
+      },
+      "id": "f1cff667-7016-4fa0-ae09-ec14f1af427b",
+      "name": "Leer zona gris",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "fromJson",
+        "options": {}
+      },
+      "id": "1be79a1b-1ee6-4407-b955-4e936db431a1",
+      "name": "Extraer zona gris",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        230,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convierte los pares de la zona gris en lotes de texto compacto para el agente.\nconst TAM_LOTE = 10;\nconst raw = $input.first().json;\nconst pares = Array.isArray(raw.data) ? raw.data : [];\nif (pares.length === 0) return [{ json: { lote: 0, n_pares: 0, pares_texto: 'SIN_PARES' } }];\n\nconst d10 = v => String(v ?? '').slice(0, 10);\nconst edad = (nac, ref) => {\n  if (!nac || !ref) return '?';\n  const a = new Date(nac), b = new Date(ref);\n  if (isNaN(a) || isNaN(b)) return '?';\n  let e = b.getFullYear() - a.getFullYear();\n  if (b.getMonth() < a.getMonth() || (b.getMonth() === a.getMonth() && b.getDate() < a.getDate())) e--;\n  return e;\n};\nconst fmt = r => [\n  r.tipo_documento, r.numero_documento,\n  [r.primer_nombre, r.segundo_nombre, r.primer_apellido, r.segundo_apellido].filter(Boolean).join(' '),\n  'nac ' + (d10(r.fecha_nacimiento) || 'SIN DATO'),\n  'registro ' + d10(r.fecha_registro) + ' (edad al registrarse: ' + edad(r.fecha_nacimiento, r.fecha_registro) + ')',\n  'tel ' + (r.telefono ?? ''), r.correo ?? '', r.direccion ?? '', r.ciudad ?? '',\n].join(' | ');\nconst sn = v => (v ? 'sí' : 'no');\nconst describir = (p, k) => {\n  const f = p.caracteristicas;\n  const doc = f.doc === 1 ? 'igual' : f.doc === 0.8 ? 'difiere en un dígito' : 'distinto';\n  return `PAR ${k + 1} (id_a=${p.id_a}, id_b=${p.id_b}) score_modelo=${p.score}\\n` +\n    `A: ${fmt(p.registro_a)}\\nB: ${fmt(p.registro_b)}\\n` +\n    `Señales: documento ${doc}; fecha de nacimiento: ${f.fecha_faltante ? 'falta en un registro' : f.fecha_igual ? 'igual' : 'distinta'}; similitud de nombre ${f.sim_nombre}; ` +\n    `mismo teléfono: ${sn(f.tel_igual)}; mismo correo: ${sn(f.correo_igual)}; uno TI y otro CC: ${sn(f.ti_cc)}`;\n};\nconst lotes = [];\nfor (let i = 0; i < pares.length; i += TAM_LOTE) {\n  const g = pares.slice(i, i + TAM_LOTE);\n  lotes.push({ json: {\n    lote: lotes.length + 1, n_pares: g.length,\n    pares_texto: `Evalúa estos ${g.length} pares:\\n\\n` + g.map((p, j) => describir(p, i + j)).join('\\n\\n') +\n      `\\n\\nDevuelve exactamente ${g.length} decisiones, una por cada PAR de arriba, sin omitir ninguno.`,\n  } });\n}\nreturn lotes;"
+      },
+      "id": "fb733d78-338b-4a38-959c-5aee54bee57d",
+      "name": "Armar lotes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.pares_texto }}",
+        "options": {
+          "systemMessage": "Eres un analista senior de calidad de datos de una empresa colombiana. Tu tarea es decidir si dos registros de clientes corresponden a la MISMA persona. Recibes pares que un modelo automático marcó como dudosos (score entre 0,55 y 0,85).\n\n### Contexto de documentos en Colombia\n- TI (tarjeta de identidad): la usan los menores de edad. CC (cédula de ciudadanía): se expide desde los 18 años. CE y PA: extranjeros.\n- Nacidos desde el año 2000 (NUIP, documento de 10 dígitos que empieza por 1): el número de la TI se CONSERVA en la CC. Si en una persona nacida desde el 2000 el número cambió entre TI y CC, es una anomalía: marca INCIERTO salvo que el resto de la evidencia sea abrumadora.\n- Nacidos antes del 2000: el número CAMBIA al pasar de TI a CC, así que un documento distinto es lo esperado y NO descarta un duplicado. La TI antigua solía tener 11 dígitos que empiezan por la fecha de nacimiento en formato AAMMDD; si esos dígitos coinciden con la fecha de nacimiento, es evidencia adicional a favor.\n- Un paso TI → CC es coherente cuando: la fecha de nacimiento es la misma, el registro con TI se hizo cuando la persona era menor de 18 años y el registro con CC se hizo a los 18 o después.\n\n### Cómo evaluar\nEvidencia fuerte a favor de DUPLICADO:\n- Misma fecha de nacimiento + mismo nombre completo (ignorando tildes, mayúsculas y espacios).\n- Paso TI → CC coherente.\n- Mismo número de documento (o con un solo dígito distinto) + nombre compatible. El documento es el identificador más fuerte: si coincide, una fecha de nacimiento con día y mes invertidos o con un dígito distinto es casi seguro un error de digitación.\n- Mismo correo electrónico.\n- Diferencias de nombre explicables por digitación: una letra cambiada, intercambiada o faltante; un apellido o un segundo nombre omitido.\n\nEvidencia en contra (apunta a DISTINTO):\n- Una persona tiene UNA sola cédula: dos CC con números completamente distintos (no explicables por un dígito) indican personas distintas, aunque coincidan el nombre y la fecha. Un nombre común con la misma fecha de nacimiento puede repetirse en una base grande.\n- Misma fecha de nacimiento, mismos apellidos y mismo hogar (teléfono o dirección) pero distinto primer nombre: casi siempre son hermanos gemelos.\n- Fecha de nacimiento claramente distinta sin documento en común.\n- Mismo nombre completo pero fecha y documento distintos: homónimo.\n- Teléfono o dirección compartidos NO bastan por sí solos: las familias los comparten.\n\nDatos faltantes:\n- Un dato vacío (fecha, teléfono, correo) NO es evidencia en contra ni a favor; decide con los datos que sí existen. Si falta la fecha pero el documento coincide (o difiere en un dígito) y el nombre es compatible, es un duplicado.\n\n### Reglas de decisión\n- DUPLICADO: la evidencia indica claramente la misma persona.\n- DISTINTO: la evidencia indica claramente personas distintas.\n- INCIERTO: la evidencia es contradictoria o insuficiente. Prefiere INCIERTO antes que fusionar sin seguridad: una fusión incorrecta es peor que una revisión humana.\n- confianza: número entre 0 y 1. Usa valores de 0,9 o más solo si no tienes dudas razonables.\n- justificacion: máximo dos frases en español que citen la evidencia concreta (por ejemplo: \"Misma fecha y nombre; TI registrada a los 16 años y CC a los 19, paso coherente aunque el número cambió\").\n\n### Formato\n- Devuelve exactamente una decisión por cada PAR recibido, con los id_a e id_b tal como aparecen. Nunca inventes ids.\n- Si el mensaje dice SIN_PARES, devuelve una lista de decisiones vacía."
+        },
+        "hasOutputParser": true
+      },
+      "id": "63dded4f-9eb2-448a-9b01-2e20dfd4905d",
+      "name": "Agente juez",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        690,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Une las decisiones de todos los lotes. Busca en cualquier estructura de salida\n// (objeto, lista o texto con JSON) porque el agente no siempre la anida igual.\nconst esDecision = v => v && typeof v === 'object' && !Array.isArray(v) && 'id_a' in v && 'id_b' in v && 'decision' in v;\nconst buscar = (v, acc) => {\n  if (v == null) return;\n  if (typeof v === 'string') {\n    const m = v.match(/[\\[{][\\s\\S]*[\\]}]/);\n    if (m) { try { buscar(JSON.parse(m[0]), acc); } catch (e) { /* texto sin JSON válido */ } }\n    return;\n  }\n  if (Array.isArray(v)) { v.forEach(x => buscar(x, acc)); return; }\n  if (typeof v === 'object') {\n    if (esDecision(v)) { acc.push(v); return; }\n    Object.values(v).forEach(x => buscar(x, acc));\n  }\n};\nconst todas = [];\nconst porLote = [];\n$input.all().forEach((it, k) => {\n  const acc = [];\n  buscar(it.json, acc);\n  todas.push(...acc);\n  porLote.push({ lote: k + 1, decisiones: acc.length, claves_salida: Object.keys(it.json) });\n});\nreturn [{ json: { decisiones: todas, diagnostico: porLote } }];"
+      },
+      "id": "556d4b8d-91d8-4143-8105-131409946293",
+      "name": "Juntar decisiones",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Segundo intento: arma lotes solo con los pares que quedaron sin decisión válida.\nconst TAM_LOTE = 5;\nconst todos = $('Extraer zona gris').first().json.data ?? [];\nconst decididos = new Set(($input.first().json.decisiones ?? []).map(d => [d.id_a, d.id_b].sort((x, y) => x - y).join('-')));\nconst raw = { data: todos.filter(p => !decididos.has([p.id_a, p.id_b].sort((x, y) => x - y).join('-'))) };\nconst pares = Array.isArray(raw.data) ? raw.data : [];\nif (pares.length === 0) return [{ json: { lote: 0, n_pares: 0, pares_texto: 'SIN_PARES' } }];\n\nconst d10 = v => String(v ?? '').slice(0, 10);\nconst edad = (nac, ref) => {\n  if (!nac || !ref) return '?';\n  const a = new Date(nac), b = new Date(ref);\n  if (isNaN(a) || isNaN(b)) return '?';\n  let e = b.getFullYear() - a.getFullYear();\n  if (b.getMonth() < a.getMonth() || (b.getMonth() === a.getMonth() && b.getDate() < a.getDate())) e--;\n  return e;\n};\nconst fmt = r => [\n  r.tipo_documento, r.numero_documento,\n  [r.primer_nombre, r.segundo_nombre, r.primer_apellido, r.segundo_apellido].filter(Boolean).join(' '),\n  'nac ' + (d10(r.fecha_nacimiento) || 'SIN DATO'),\n  'registro ' + d10(r.fecha_registro) + ' (edad al registrarse: ' + edad(r.fecha_nacimiento, r.fecha_registro) + ')',\n  'tel ' + (r.telefono ?? ''), r.correo ?? '', r.direccion ?? '', r.ciudad ?? '',\n].join(' | ');\nconst sn = v => (v ? 'sí' : 'no');\nconst describir = (p, k) => {\n  const f = p.caracteristicas;\n  const doc = f.doc === 1 ? 'igual' : f.doc === 0.8 ? 'difiere en un dígito' : 'distinto';\n  return `PAR ${k + 1} (id_a=${p.id_a}, id_b=${p.id_b}) score_modelo=${p.score}\\n` +\n    `A: ${fmt(p.registro_a)}\\nB: ${fmt(p.registro_b)}\\n` +\n    `Señales: documento ${doc}; fecha de nacimiento: ${f.fecha_faltante ? 'falta en un registro' : f.fecha_igual ? 'igual' : 'distinta'}; similitud de nombre ${f.sim_nombre}; ` +\n    `mismo teléfono: ${sn(f.tel_igual)}; mismo correo: ${sn(f.correo_igual)}; uno TI y otro CC: ${sn(f.ti_cc)}`;\n};\nconst lotes = [];\nfor (let i = 0; i < pares.length; i += TAM_LOTE) {\n  const g = pares.slice(i, i + TAM_LOTE);\n  lotes.push({ json: {\n    lote: lotes.length + 1, n_pares: g.length,\n    pares_texto: `Evalúa estos ${g.length} pares:\\n\\n` + g.map((p, j) => describir(p, i + j)).join('\\n\\n') +\n      `\\n\\nDevuelve exactamente ${g.length} decisiones, una por cada PAR de arriba, sin omitir ninguno.`,\n  } });\n}\nreturn lotes;"
+      },
+      "id": "8684da4e-56f4-4f9e-a503-67af10186d17",
+      "name": "Pares sin decisión",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.pares_texto }}",
+        "options": {
+          "systemMessage": "Eres un analista senior de calidad de datos de una empresa colombiana. Tu tarea es decidir si dos registros de clientes corresponden a la MISMA persona. Recibes pares que un modelo automático marcó como dudosos (score entre 0,55 y 0,85).\n\n### Contexto de documentos en Colombia\n- TI (tarjeta de identidad): la usan los menores de edad. CC (cédula de ciudadanía): se expide desde los 18 años. CE y PA: extranjeros.\n- Nacidos desde el año 2000 (NUIP, documento de 10 dígitos que empieza por 1): el número de la TI se CONSERVA en la CC. Si en una persona nacida desde el 2000 el número cambió entre TI y CC, es una anomalía: marca INCIERTO salvo que el resto de la evidencia sea abrumadora.\n- Nacidos antes del 2000: el número CAMBIA al pasar de TI a CC, así que un documento distinto es lo esperado y NO descarta un duplicado. La TI antigua solía tener 11 dígitos que empiezan por la fecha de nacimiento en formato AAMMDD; si esos dígitos coinciden con la fecha de nacimiento, es evidencia adicional a favor.\n- Un paso TI → CC es coherente cuando: la fecha de nacimiento es la misma, el registro con TI se hizo cuando la persona era menor de 18 años y el registro con CC se hizo a los 18 o después.\n\n### Cómo evaluar\nEvidencia fuerte a favor de DUPLICADO:\n- Misma fecha de nacimiento + mismo nombre completo (ignorando tildes, mayúsculas y espacios).\n- Paso TI → CC coherente.\n- Mismo número de documento (o con un solo dígito distinto) + nombre compatible. El documento es el identificador más fuerte: si coincide, una fecha de nacimiento con día y mes invertidos o con un dígito distinto es casi seguro un error de digitación.\n- Mismo correo electrónico.\n- Diferencias de nombre explicables por digitación: una letra cambiada, intercambiada o faltante; un apellido o un segundo nombre omitido.\n\nEvidencia en contra (apunta a DISTINTO):\n- Una persona tiene UNA sola cédula: dos CC con números completamente distintos (no explicables por un dígito) indican personas distintas, aunque coincidan el nombre y la fecha. Un nombre común con la misma fecha de nacimiento puede repetirse en una base grande.\n- Misma fecha de nacimiento, mismos apellidos y mismo hogar (teléfono o dirección) pero distinto primer nombre: casi siempre son hermanos gemelos.\n- Fecha de nacimiento claramente distinta sin documento en común.\n- Mismo nombre completo pero fecha y documento distintos: homónimo.\n- Teléfono o dirección compartidos NO bastan por sí solos: las familias los comparten.\n\nDatos faltantes:\n- Un dato vacío (fecha, teléfono, correo) NO es evidencia en contra ni a favor; decide con los datos que sí existen. Si falta la fecha pero el documento coincide (o difiere en un dígito) y el nombre es compatible, es un duplicado.\n\n### Reglas de decisión\n- DUPLICADO: la evidencia indica claramente la misma persona.\n- DISTINTO: la evidencia indica claramente personas distintas.\n- INCIERTO: la evidencia es contradictoria o insuficiente. Prefiere INCIERTO antes que fusionar sin seguridad: una fusión incorrecta es peor que una revisión humana.\n- confianza: número entre 0 y 1. Usa valores de 0,9 o más solo si no tienes dudas razonables.\n- justificacion: máximo dos frases en español que citen la evidencia concreta (por ejemplo: \"Misma fecha y nombre; TI registrada a los 16 años y CC a los 19, paso coherente aunque el número cambió\").\n\n### Formato\n- Devuelve exactamente una decisión por cada PAR recibido, con los id_a e id_b tal como aparecen. Nunca inventes ids.\n- Si el mensaje dice SIN_PARES, devuelve una lista de decisiones vacía."
+        },
+        "hasOutputParser": true
+      },
+      "id": "32df0224-0df8-4af6-b08b-e93534dde391",
+      "name": "Agente juez (2.º intento)",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        1150,
+        680
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Une las decisiones del primer intento y del reintento (sin duplicar pares).\nconst esDecision = v => v && typeof v === 'object' && !Array.isArray(v) && 'id_a' in v && 'id_b' in v && 'decision' in v;\nconst buscar = (v, acc) => {\n  if (v == null) return;\n  if (typeof v === 'string') {\n    const m = v.match(/[\\[{][\\s\\S]*[\\]}]/);\n    if (m) { try { buscar(JSON.parse(m[0]), acc); } catch (e) {} }\n    return;\n  }\n  if (Array.isArray(v)) { v.forEach(x => buscar(x, acc)); return; }\n  if (typeof v === 'object') {\n    if (esDecision(v)) { acc.push(v); return; }\n    Object.values(v).forEach(x => buscar(x, acc));\n  }\n};\nconst primero = $('Juntar decisiones').first().json;\nconst nuevas = [];\n$input.all().forEach(it => buscar(it.json, nuevas));\nconst clave = d => [d.id_a, d.id_b].map(Number).sort((x, y) => x - y).join('-');\nconst vistos = new Set(primero.decisiones.map(clave));\nconst agregadas = nuevas.filter(d => !vistos.has(clave(d)));\nreturn [{ json: {\n  decisiones: primero.decisiones.concat(agregadas),\n  diagnostico: { primer_intento: primero.diagnostico, decisiones_reintento: agregadas.length },\n} }];"
+      },
+      "id": "94debd51-1198-494a-8812-69b7a8623840",
+      "name": "Juntar decisiones finales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        680
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toJson",
+        "options": {}
+      },
+      "id": "a4063049-eeb0-401b-adef-95f28c726cfb",
+      "name": "Decisiones a JSON",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1150,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:\\dedup\\salida\\decisiones_agente.json",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "03809c39-625e-4c47-ac2b-dbf625310006",
+      "name": "Guardar decisiones",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=C:\\dedup\\venv\\Scripts\\python.exe C:\\dedup\\aplicar_decisiones.py --decisiones C:\\dedup\\salida\\decisiones_agente.json --pares C:\\dedup\\salida\\pares_zona_gris.json --clientes C:\\dedup\\salida\\clientes_actualizado.xlsx --fusiones C:\\dedup\\salida\\fusiones.xlsx --salida C:\\dedup\\salida --umbral-confianza 0.8 --id-ejecucion {{ $('Leer métricas').first().json.id_ejecucion }}"
+      },
+      "id": "b1f6dd1b-019a-4045-a9a2-5abee6ccccae",
+      "name": "Aplicar decisiones",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1610,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const lineas = $input.first().json.stdout.trim().split(/\\r?\\n/);\nreturn [{ json: JSON.parse(lineas[lineas.length - 1]) }];"
+      },
+      "id": "b5a33353-4285-4c80-9f1e-9648e1e2cf05",
+      "name": "Leer métricas agente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\dedup\\datos\\log_ejecuciones.xlsx",
+        "options": {}
+      },
+      "id": "7d7918a6-3eb9-4d78-bbfb-f6f3dec5659b",
+      "name": "Leer log_ejecuciones",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        230,
+        600
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "8a07fbf2-6f9c-4716-ad7b-add900ba49c7",
+      "name": "Extraer log_ejecuciones",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        460,
+        600
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const previas = $input.all().map(i => i.json)\n  .filter(r => r.id_ejecucion !== undefined && r.id_ejecucion !== '');\nconst m = $('Leer métricas').first().json;\nconst ag = $('Leer métricas agente').first().json;\nprevias.push({\n  id_ejecucion: m.id_ejecucion,\n  fecha: m.fecha,\n  registros_procesados: m.registros_procesados,\n  pares_evaluados: m.pares_evaluados,\n  duplicados_auto: m.duplicados_auto,\n  duplicados_agente: ag.duplicados_agente,\n  pendientes_revision: ag.revision_humana,\n  duracion_seg: m.duracion_seg,\n  version_modelo: m.version_modelo,\n});\nreturn previas.map(json => ({ json }));"
+      },
+      "id": "ca47d734-36cf-4040-9814-effd41c60bba",
+      "name": "Agregar ejecución",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        690,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "d306ce99-6963-40ec-bb7c-0fe2d590bc04",
+      "name": "log_ejecuciones a Excel",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        920,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:\\dedup\\datos\\log_ejecuciones.xlsx",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "516dc8fc-fe6c-4fc4-9108-198d7d00ea3e",
+      "name": "Guardar log_ejecuciones",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1150,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\dedup\\salida\\fusiones.xlsx",
+        "options": {}
+      },
+      "id": "6856cb51-efc5-48ce-b92d-942da20622f7",
+      "name": "Leer fusiones nuevas",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        600
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "27b9e6e8-700c-4874-8fc4-119cc9426efa",
+      "name": "Extraer fusiones nuevas",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1610,
+        600
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\dedup\\datos\\log_fusiones.xlsx",
+        "options": {}
+      },
+      "id": "3e5587a3-b0d9-40fb-945f-e3ff1fea5d63",
+      "name": "Leer log_fusiones",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        0,
+        900
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "97846df4-f01b-4ea2-918a-8b4478e76532",
+      "name": "Extraer log_fusiones",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        230,
+        900
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const valida = r => r.id_origen !== undefined && r.id_origen !== '';\nconst previas = $input.all().map(i => i.json).filter(valida);\nconst nuevas = $('Extraer fusiones nuevas').all().map(i => i.json).filter(valida);\nconst filas = previas.concat(nuevas);\nif (filas.length === 0) {\n  return [{ json: { id_ejecucion: '', id_origen: '', id_maestro: '', score: '', decidido_por: '', justificacion: '' } }];\n}\nreturn filas.map(json => ({ json }));"
+      },
+      "id": "85afd1d4-0d18-4e48-8184-3a8946fa8e65",
+      "name": "Unir fusiones",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "f0e1fe06-7944-4e82-bad1-b39a3dbad506",
+      "name": "log_fusiones a Excel",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        690,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:\\dedup\\datos\\log_fusiones.xlsx",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "560ca07b-5f22-4113-95c5-e5683142436d",
+      "name": "Guardar log_fusiones",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        920,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\dedup\\salida\\clientes_actualizado.xlsx",
+        "options": {}
+      },
+      "id": "aa006b43-6dc2-4929-b4ca-0ad3f4ee53d9",
+      "name": "Leer clientes actualizado",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1150,
+        900
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:\\dedup\\datos\\clientes.xlsx",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "a5f972a9-2778-435a-bd9e-841da43e5a00",
+      "name": "Actualizar tabla maestra",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        900
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\dedup\\datos\\control.xlsx",
+        "options": {}
+      },
+      "id": "4c491d25-c966-4988-b44d-8d6942fd4f83",
+      "name": "Releer control",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1610,
+        900
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "93ac4e5b-1f53-4ab4-bc80-0e1639fe94ac",
+      "name": "Extraer control final",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        0,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fx = v => (typeof v === 'number' && v > 20000)\n  ? new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ')\n  : (v ?? '');\nconst ahora = $now.toFormat('yyyy-MM-dd HH:mm:ss');\nreturn $input.all().map(i => {\n  const f = { ...i.json, fecha_solicitud: fx(i.json.fecha_solicitud), fecha_fin: fx(i.json.fecha_fin) };\n  if (String(f.estado).trim().toUpperCase() === 'EN_PROCESO') {\n    f.estado = 'COMPLETADO';\n    f.fecha_fin = ahora;\n  }\n  return { json: f };\n});"
+      },
+      "id": "c20561c2-89fd-4ec7-93e1-2f561ee504aa",
+      "name": "Marcar COMPLETADO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        230,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "6da1d167-89b1-4636-beaa-242c270caa47",
+      "name": "Control final a Excel",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:\\dedup\\datos\\control.xlsx",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "ae99606a-b1a7-4c3f-b587-8b5e2782d346",
+      "name": "Guardar control",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        690,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reúne las cifras de la ejecución para el informe (sin datos personales)\nconst m = $('Leer métricas').first().json;\nconst ag = $('Leer métricas agente').first().json;\nconst dec = $('Juntar decisiones finales').first().json.decisiones;\nconst historial = $('Agregar ejecución').all().map(i => i.json);\nconst previas = historial.slice(Math.max(0, historial.length - 6), historial.length - 1);\nconst conteo = dec.reduce((acc, d) => { acc[d.decision] = (acc[d.decision] || 0) + 1; return acc; }, {});\nconst confianzaMedia = dec.length ? (dec.reduce((s, d) => s + Number(d.confianza || 0), 0) / dec.length).toFixed(2) : 'n/a';\nconst ejemplos = dec.slice(0, 12).map(d => `- ${d.decision} (confianza ${d.confianza}): ${d.justificacion}`).join('\\n');\nconst totales = {\n  registros_procesados: m.registros_procesados,\n  pares_evaluados: m.pares_evaluados,\n  fusiones_modelo: m.duplicados_auto,\n  pares_zona_gris: ag.pares_zona_gris,\n  fusiones_agente: ag.duplicados_agente,\n  total_fusiones: m.duplicados_auto + ag.duplicados_agente,\n  descartados_por_agente_como_distintos: ag.distintos,\n  revision_humana: ag.revision_humana,\n  decisiones_invalidas: ag.decisiones_invalidas,\n  duracion_modelo_seg: m.duracion_seg,\n};\nconst contexto = [\n  `Ejecución ${m.id_ejecucion} (${m.fecha})`,\n  `Totales (usa estas cifras tal cual): ${JSON.stringify(totales)}`,\n  `Parámetros: modelo ${m.version_modelo}, umbral alto ${m.umbral_alto}, umbral bajo ${m.umbral_bajo}, confianza mínima del agente ${ag.umbral_confianza}`,\n  `Decisiones del agente por tipo: ${JSON.stringify(conteo)}; confianza media: ${confianzaMedia}`,\n  `Ejemplos de justificaciones del agente:\\n${ejemplos || '(no hubo pares en zona gris)'}`,\n  `Ejecuciones anteriores (la más reciente al final): ${JSON.stringify(previas)}`,\n].join('\\n\\n');\nreturn [{ json: { contexto } }];"
+      },
+      "id": "28a55e99-7d10-4d9e-a245-65f4fa5e475b",
+      "name": "Contexto del informe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.contexto }}",
+        "options": {
+          "systemMessage": "Eres un analista de datos que redacta el informe de una ejecución del proceso automático de deduplicación de clientes. Escribe en español, en Markdown, para un público de negocio. Máximo 350 palabras.\n\nEstructura:\n1. **Resumen**: dos o tres frases con el resultado principal.\n2. **Cifras de la ejecución**: registros procesados, pares evaluados, fusiones del modelo, fusiones del agente, total de fusiones, pares que el agente descartó como personas distintas, casos enviados a revisión humana y duración. Usa los totales que recibes en la sección \"Totales\"; no los recalcules.\n3. **Hallazgos**: patrones en las decisiones del agente (por ejemplo, cuántos casos fueron pasos TI → CC, gemelos o fechas mal digitadas) y cualquier anomalía.\n4. **Tendencia**: comparación con las ejecuciones anteriores, si las hay.\n5. **Acciones recomendadas**: qué debe revisar una persona.\n\nUsa solo las cifras que recibes. No inventes datos. No incluyas nombres ni números de documento de clientes."
+        }
+      },
+      "id": "6b08c0b3-db03-475c-b5f1-d2f8ae15ffd6",
+      "name": "Agente redactor del informe",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        1150,
+        1200
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "output",
+        "options": {
+          "fileName": "informe.md"
+        }
+      },
+      "id": "85d99e26-dbcc-421c-a392-73a6cb1785f7",
+      "name": "Informe a archivo",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1380,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=C:\\dedup\\salida\\informe_{{ $('Leer métricas').first().json.id_ejecucion }}.md",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "72fb0ab1-a7aa-4fed-9dd0-d1f308acc20c",
+      "name": "Guardar informe",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1610,
+        1200
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-haiku-5-5",
+          "cachedResultName": "Claude Haiku 5.5"
+        },
+        "options": {
+          "maxTokensToSample": 4096,
+          "temperature": 0
+        }
+      },
+      "id": "3c779350-29b7-490f-b914-34f987aec12a",
+      "name": "Claude Haiku (juez)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        600,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"decisiones\": [\n    {\n      \"id_a\": 153,\n      \"id_b\": 2041,\n      \"decision\": \"DUPLICADO\",\n      \"confianza\": 0.92,\n      \"justificacion\": \"Misma fecha y nombre; paso TI a CC coherente aunque el número cambió.\"\n    }\n  ]\n}"
+      },
+      "id": "4e2f8264-8402-4a79-ab5d-1c2ef1c4e1fa",
+      "name": "Formato de decisiones",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        780,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-haiku-5-5",
+          "cachedResultName": "Claude Haiku 5.5"
+        },
+        "options": {
+          "maxTokensToSample": 4096,
+          "temperature": 0
+        }
+      },
+      "id": "7e9d95e7-aa68-4e64-9209-ae89867b8c66",
+      "name": "Claude Haiku (informe)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1150,
+        1380
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-haiku-5-5",
+          "cachedResultName": "Claude Haiku 5.5"
+        },
+        "options": {
+          "maxTokensToSample": 4096,
+          "temperature": 0
+        }
+      },
+      "id": "caf2c24f-4940-48f2-977b-d15b9d9e637f",
+      "name": "Claude Haiku (reintento)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [
+        1060,
+        860
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"decisiones\": [\n    {\n      \"id_a\": 153,\n      \"id_b\": 2041,\n      \"decision\": \"DUPLICADO\",\n      \"confianza\": 0.92,\n      \"justificacion\": \"Misma fecha y nombre; paso TI a CC coherente aunque el número cambió.\"\n    }\n  ]\n}"
+      },
+      "id": "e8ee2138-916a-40bd-bcd3-51e29b164e03",
+      "name": "Formato de decisiones (reintento)",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        1240,
+        860
+      ]
+    }
+  ],
+  "connections": {
+    "Cada 5 minutos": {
+      "main": [
+        [
+          {
+            "node": "Leer control",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer control": {
+      "main": [
+        [
+          {
+            "node": "Extraer control",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer control": {
+      "main": [
+        [
+          {
+            "node": "¿Hay pendiente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay pendiente?": {
+      "main": [
+        [
+          {
+            "node": "Control a Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Control a Excel": {
+      "main": [
+        [
+          {
+            "node": "Marcar EN_PROCESO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar EN_PROCESO": {
+      "main": [
+        [
+          {
+            "node": "Ejecutar dedup.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ejecutar dedup.py": {
+      "main": [
+        [
+          {
+            "node": "Leer métricas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer métricas": {
+      "main": [
+        [
+          {
+            "node": "Leer zona gris",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer zona gris": {
+      "main": [
+        [
+          {
+            "node": "Extraer zona gris",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer zona gris": {
+      "main": [
+        [
+          {
+            "node": "Armar lotes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar lotes": {
+      "main": [
+        [
+          {
+            "node": "Agente juez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente juez": {
+      "main": [
+        [
+          {
+            "node": "Juntar decisiones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Juntar decisiones": {
+      "main": [
+        [
+          {
+            "node": "Pares sin decisión",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pares sin decisión": {
+      "main": [
+        [
+          {
+            "node": "Agente juez (2.º intento)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente juez (2.º intento)": {
+      "main": [
+        [
+          {
+            "node": "Juntar decisiones finales",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Juntar decisiones finales": {
+      "main": [
+        [
+          {
+            "node": "Decisiones a JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decisiones a JSON": {
+      "main": [
+        [
+          {
+            "node": "Guardar decisiones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar decisiones": {
+      "main": [
+        [
+          {
+            "node": "Aplicar decisiones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar decisiones": {
+      "main": [
+        [
+          {
+            "node": "Leer métricas agente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer métricas agente": {
+      "main": [
+        [
+          {
+            "node": "Leer log_ejecuciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer log_ejecuciones": {
+      "main": [
+        [
+          {
+            "node": "Extraer log_ejecuciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer log_ejecuciones": {
+      "main": [
+        [
+          {
+            "node": "Agregar ejecución",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agregar ejecución": {
+      "main": [
+        [
+          {
+            "node": "log_ejecuciones a Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "log_ejecuciones a Excel": {
+      "main": [
+        [
+          {
+            "node": "Guardar log_ejecuciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar log_ejecuciones": {
+      "main": [
+        [
+          {
+            "node": "Leer fusiones nuevas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer fusiones nuevas": {
+      "main": [
+        [
+          {
+            "node": "Extraer fusiones nuevas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer fusiones nuevas": {
+      "main": [
+        [
+          {
+            "node": "Leer log_fusiones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer log_fusiones": {
+      "main": [
+        [
+          {
+            "node": "Extraer log_fusiones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer log_fusiones": {
+      "main": [
+        [
+          {
+            "node": "Unir fusiones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unir fusiones": {
+      "main": [
+        [
+          {
+            "node": "log_fusiones a Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "log_fusiones a Excel": {
+      "main": [
+        [
+          {
+            "node": "Guardar log_fusiones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar log_fusiones": {
+      "main": [
+        [
+          {
+            "node": "Leer clientes actualizado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer clientes actualizado": {
+      "main": [
+        [
+          {
+            "node": "Actualizar tabla maestra",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Actualizar tabla maestra": {
+      "main": [
+        [
+          {
+            "node": "Releer control",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Releer control": {
+      "main": [
+        [
+          {
+            "node": "Extraer control final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer control final": {
+      "main": [
+        [
+          {
+            "node": "Marcar COMPLETADO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar COMPLETADO": {
+      "main": [
+        [
+          {
+            "node": "Control final a Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Control final a Excel": {
+      "main": [
+        [
+          {
+            "node": "Guardar control",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar control": {
+      "main": [
+        [
+          {
+            "node": "Contexto del informe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contexto del informe": {
+      "main": [
+        [
+          {
+            "node": "Agente redactor del informe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agente redactor del informe": {
+      "main": [
+        [
+          {
+            "node": "Informe a archivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Informe a archivo": {
+      "main": [
+        [
+          {
+            "node": "Guardar informe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Haiku (juez)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente juez",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formato de decisiones": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Agente juez",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Haiku (reintento)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente juez (2.º intento)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formato de decisiones (reintento)": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Agente juez (2.º intento)",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Haiku (informe)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente redactor del informe",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  },
+  "pinData": {}
+}

@@ -1,0 +1,150 @@
+{
+  "name": "Deduplicación - manejo de errores",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "082e4c6a-59b4-4370-a0a6-92a921833b0a",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:\\dedup\\datos\\control.xlsx",
+        "options": {}
+      },
+      "id": "f7b57c9c-47d7-447f-a4a5-efd2ff327a2b",
+      "name": "Leer control",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "40f2b374-fe4f-45d2-9f90-bf5006bb1e5b",
+      "name": "Extraer control",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fx = v => (typeof v === 'number' && v > 20000)\n  ? new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ')\n  : (v ?? '');\nconst err = $('Error Trigger').first().json;\nconst msg = err.execution?.error?.message ?? 'Error desconocido';\nconst nodoFallo = err.execution?.lastNodeExecuted ?? '';\nconst ahora = $now.toFormat('yyyy-MM-dd HH:mm:ss');\nreturn $input.all().map(i => {\n  const f = { ...i.json, fecha_solicitud: fx(i.json.fecha_solicitud), fecha_fin: fx(i.json.fecha_fin) };\n  if (String(f.estado).trim().toUpperCase() === 'EN_PROCESO') {\n    f.estado = 'ERROR';\n    f.fecha_fin = ahora;\n    f.mensaje_error = `${nodoFallo}: ${msg}`.slice(0, 500);\n  }\n  return { json: f };\n});"
+      },
+      "id": "1b8d95e2-8a35-401a-acf4-c7469e0f3fd2",
+      "name": "Marcar ERROR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "56f5a0a2-f4bf-4511-b0c9-45584e07fd61",
+      "name": "Control a Excel",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:\\dedup\\datos\\control.xlsx",
+        "dataPropertyName": "data",
+        "options": {}
+      },
+      "id": "ab36a0b0-82fb-42f5-ad7d-1d1c7e0368a6",
+      "name": "Guardar control",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Leer control",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer control": {
+      "main": [
+        [
+          {
+            "node": "Extraer control",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer control": {
+      "main": [
+        [
+          {
+            "node": "Marcar ERROR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar ERROR": {
+      "main": [
+        [
+          {
+            "node": "Control a Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Control a Excel": {
+      "main": [
+        [
+          {
+            "node": "Guardar control",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Bogota"
+  },
+  "pinData": {}
+}
